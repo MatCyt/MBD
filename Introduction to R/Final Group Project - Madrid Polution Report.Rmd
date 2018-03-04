@@ -1,0 +1,591 @@
+---
+title: "MC_Report_Raw"
+author: "MC"
+date: "15 grudnia 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## MERGING ALL THE FILES TOGETHER
+In the first section of the code we are working over the data cleaning and manipulation splitted into few main steps:
+1) Merging all files together
+2) Creating an index based on the file title and changing it into date
+3) Creating Parameter name
+4) Creating data aggregation on daily level
+5) Adding weather data.
+
+## Merging the files
+
+```{r}
+# set working directory to the folder in which all csv files are stored 
+setwd('C:/Users/mcytr_000/Desktop/Workgroup Assignment/workgroup data')
+
+# list all the files in that directory
+file_list <- list.files()
+
+
+## Merging all the polution data together and creating file index that will be necessary for creating dates
+
+# create empty dataframe that we will rbind our files to.
+pollution<-data.frame(day=NA, hour=NA, station=NA, parameter=NA, value=NA, file_index=NA)
+
+# rbinding all the files in the folder and adding a new column with file index name
+for (file in file_list){
+  temp_dataset <-read.csv2(file, header=TRUE, sep=",")
+  temp_dataset$file_index<-file
+  pollution<-rbind(pollution, temp_dataset)
+  rm(temp_dataset)
+}
+```
+
+Create a numerical file index that is necessary for extracting the date
+
+```{r}
+# create numerical file index
+pollution$file_index_num<-match(pollution$file_index,file_list)
+
+# delete first empty NA row
+pollution <- pollution[-c(1),]
+
+str(pollution)
+head(pollution,50)
+tail(pollution,50)
+```
+
+## ADDING YEAR, MONTH AND TIMESTAMP
+
+Adding a year
+
+```{r}
+# add Year column index
+pollution$year1 <- (pollution$file_index_num-1)%/%12+1
+
+head(pollution,50)
+str(pollution)
+unique(pollution$year1)
+
+#transform yearcolumn into proper date with simple lookup
+yearlist<-c(2011,2012,2013,2014,2015,2016)
+pollution$year<-yearlist[pollution$year1]
+
+head(pollution,50)
+tail(pollution)
+unique(pollution$year)
+```
+
+Adding a month and creating a timestamp
+
+```{r}
+# creating month lookup 
+monthtable<-data.frame(file_index_num=seq(1:72), month=rep(1:12,6))
+monthtable
+
+pollution<-merge(monthtable, pollution, by='file_index_num')
+
+head(pollution,50)
+unique(pollution$month)
+
+# creating TimeSpamp
+
+pollution$timestamp<-paste(pollution$year, pollution$month, pollution$day, pollution$hour, sep = "-")
+```
+
+Creating a main date column
+
+```{r}
+# create main date with paste function and treat as dates
+pollution$date<-paste(pollution$year, pollution$month, pollution$day,sep = "-")
+pollution$date<-as.Date(pollution$date)
+
+head(pollution,50)
+str(pollution)
+```
+
+
+## CREATE A PARAMETER NAMES
+
+Creating a lookup table and merging it with pollution df
+
+```{r}
+unique(pollution$parameter)
+
+pnames<-c('SO2','CO','NO','NO2','PM2.5','PM10','NOx','O3','TOL','BEN','EBE','MXY','PXY','OXY','TCH','CH4','NMHC')
+pnumbers<-c(1,6,7,8,9,10,12,14,20,30,35,37,38,39, 42,43,44)
+parametersnames<-data.frame(parameter=pnumbers,parameter_name=pnames)
+parametersnames
+
+#merging tables lookup
+pollution<-merge(parametersnames,pollution,by='parameter')
+```
+
+## CREATE DAILY AGGREGATION
+
+```{r}
+library(dplyr)
+
+pollution$value<-as.numeric(pollution$value)
+
+#create new df with daily avarages
+pollution_daily<-pollution %>% group_by(date, parameter_name) %>% summarise(daily_average=mean(value))
+
+pollution_daily<-as.data.frame(pollution_daily)
+View(pollution_daily)
+
+#delete NA from dates
+pollution_daily<-pollution_daily[complete.cases(pollution_daily$date),]
+summary(pollution_daily$date)
+pollution_daily
+
+```
+
+
+## ADDING WEATHER DATA
+
+```{r}
+#specify the location of the weather data
+setwd('C:/Users/mcytr_000/Desktop/Workgroup Assignment')
+
+#add the excel data
+library(g.data)
+library(xlsx)
+
+weather<- readxl::read_xlsx('weather.xlsx',1)
+weather<-as.data.frame(weather)
+
+weather$date<-as.Date(weather$date, '%Y.%m.%d')
+weather
+```
+
+
+
+## CREATE POLLUTION_DAILY Final File
+
+Merging the pollution data and weather data plus deleting the NA
+
+```{r}
+#merge weather and pollution_daily
+final_pollution<-merge(pollution_daily, weather, by='date', all.x=TRUE)
+final_pollution
+
+#deleting NA
+final_pollution<-final_pollution[complete.cases(final_pollution), ]
+sum(is.na(final_pollution))
+
+head(final_pollution)
+```
+
+
+## SAVING WORK
+
+Setting the work directory to main folder and saving csv
+
+```{r}
+#set working directory to main group folder and save the file there as csv and 
+setwd('C:/Users/mcytr_000/Desktop/Workgroup Assignment')
+
+write.csv2(final_pollution,file = 'final_pollution.csv')
+saveRDS(final_pollution, 'final_pollution.Rdata')
+```
+
+
+## CHARTS
+
+## CHART 1 - Distribution
+
+Showing the share of the pollution between parameters in specific year
+
+```{r}
+#create new df with daily avarages
+final_pollution$year<-year(final_pollution$date)
+
+pollution_yearly<-final_pollution %>% group_by(year, parameter_name) %>% summarise(daily_average=sum(daily_average))
+pollution_yearly<-as.data.frame(pollution_yearly)
+str(pollution_yearly)
+
+#Create the barchart
+theme_set(theme_classic())
+stat=identity
+
+chart3 <- ggplot(pollution_yearly, aes(year, daily_average))
+chart3 + geom_col(aes(fill=parameter_name), width = 0.8) + 
+  theme(axis.text.x = element_text(angle=25, vjust=0.5)) +
+  labs(title="Parameters by Year", 
+       subtitle="Summary of yearly share of parameters", 
+       caption="Source: Madrid Pollution Data 2011-2016")
+
+```
+
+
+
+
+###  Chart 2 - time series dygraph with input
+
+Showing the time evolution of values for parameter SPECIFIED BY THE USER AS AN INPUT 
+
+```{r}
+# Library
+library(dygraphs)
+library(xts)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+
+##Specify the input you want and go through rest of the code
+
+input1<-readline(prompt = "Please choose a parameter from the following:SO2,CO,NO,NO2,PM2.5,PM10,NOx,O3,TOL,BEN,EBE,MXY,PXY,OXY,TCH,CH4,NMHC: " )
+
+data1=final_pollution[grep(input1, final_pollution$parameter_name), ]
+
+# Then you can create the xts format, and thus use dygraph
+don=xts(x = data1$daily_average, order.by = data1$date)
+swidg = dygraph(don, main=input1) %>%
+  dyOptions(labelsUTC = TRUE, fillGraph=TRUE, fillAlpha=0.1, drawGrid = FALSE, colors="#D8AE5A") %>%
+  dyRangeSelector() %>%
+  dyCrosshair(direction = "vertical") %>%
+  dyHighlight(highlightCircleSize = 5, highlightSeriesBackgroundAlpha = 0.2, hideOnMouseOut = FALSE)  %>%
+  dyRoller(rollPeriod = 1)
+
+#SHOW DYGRAPH
+swidg
+
+```
+
+
+### CHART 3 - Function creating simple time series
+
+Create a function returning timeseries - put the name of the parameter as function input
+
+```{r}
+
+timeseries<-function(parameter){
+  parameter1<-deparse(substitute(parameter))
+  data2=final_pollution[grep(parameter1, final_pollution$parameter_name), ]
+  return(ggplot(data2,aes(x=date,y=daily_average, colour='red'))+geom_line(lwd=2)+geom_point(size=1))
+}
+
+timeseries(NO)
+```
+
+
+
+## DESCRIPTIVE ANALYSIS
+
+### Selecting parameter, creating subset of final_pollution dataset
+
+In the next lines of code, the user is asked to select a parameter which she would like to analyse. Afterwards, a subset of the final_pollution dataset is created which contains only the data of this respective parameter.
+
+```{r}
+pmt <- readline(prompt = "Please choose a parameter from the following:SO2,CO,NO,NO2,PM2.5,PM10,NOx,O3,TOL,BEN,EBE,MXY,PXY,OXY,TCH,CH4,NMHC: " )
+y <- subset(final_pollution,parameter_name == pmt)
+```
+
+
+###  Setting up the analysis
+In the following, the data is stored as xts so it can be displayed by dygraph. Also a function is created which prints the major analytics (Mean, Standard Deviation (SD), Minimum, Median, Maximum,and the Coefficient of Variation) of a parameter to the console. It further plots an interactive dygraph of the daily average of this parameter.
+
+```{r}
+library(xts)
+
+f <- xts(x = final_pollution$daily_average, order.by = final_pollution$date)
+dscr_anls <- function(parameter) {
+  l <- c('Mean', 'SD', 'Minimum','Median', 'Maximum', 'Coefficient of Variation (%)')
+  ov <- data.frame(Analysis = l, Value = rep(1:6))
+  ov[1,2] <- mean(y$daily_average)
+  ov[2,2] <- sd(y$daily_average)
+  ov[3,2] <- min(y$daily_average)
+  ov[4,2] <- quantile(y$daily_average, 0.5)
+  ov[5,2] <- max(y$daily_average)
+  ov[6,2] <- 100*sd(y$daily_average)/(mean(y$daily_average))
+  print (ov)
+  
+  dygraph(f, main=parameter, ylab = 'Daily Average') %>%
+    dySeries("V1", label = 'Pollution Level') %>%
+    dyLegend(show = "always", hideOnMouseOut = FALSE) %>%
+    dyOptions(drawGrid = TRUE, axisLineColor = "navy", gridLineColor = "lightblue") %>%
+    dyRangeSelector()
+}
+
+dscr_anls('CO')
+
+```
+
+## Analysis of the general dataset
+
+As you can see in the histogram, the distribution of the average daily air pollution levels is  right-skewed with the majority of observations ranging between 0 and 50 μg/m3. The mean air pollution level across all parameters is approximately 13 and the standard deviation (SD) is 20. This, in comparison to the mean, high SD indicates the skewness of the graph, especially taking into account that all values lower than the mean are within one standard deviation from the mean. In fact, the median (4) is significantly lower than the mean (13) which shows that some parameters likely have very high levels with regard to the mean. This is also indicated by the maximum level of air pollution which is 17 times higher than the average value and 5,425 times larger than the smallest value. Looking at the largest values with an air pollution larger than 150, one notices that out of 13 values eleven are of parameter type "NO"" and only two are of type "PM10". Still, PM10 has the highest overall value (217).
+
+```{r}
+library(ggplot2)
+qplot(final_pollution$daily_average, geom='histogram', bins=10, main = 'Histogram', xlab='Air pollution (daily average in μg/m3)', ylab='Number of observations')
+mean(final_pollution$daily_average)
+sd(final_pollution$daily_average)
+min(final_pollution$daily_average)
+quantile(final_pollution$daily_average, 0.5)
+max(final_pollution$daily_average)
+subset(final_pollution, daily_average >= 150)
+```
+
+
+Instead of analysing every single variable, this report focuses on the analyis of the value "NO". However, the analysis can be easily replicated to other factors.
+
+As can be seen in the dygraph, the values regularly are highest in April and reach above average scores in October. Although eleven of the 13 highest values are of the parameter NO, its mean is only 23 with a minimum of 2 and a median of 12. This shows us that the distribution of NO is highly right-skewed with a maximum value of 9 times the mean value. The coefficient of variation which displays the standard deviation (29) relative to the mean consequently is very high too (123%).
+
+Analysing the histogram of the value distribution, the intuition is confirmed and one can clearly see that the graph is right-skewed. Due to the low number of extreme observations, however, the distribution can still be described as normally distributed with a p-value < 2.2e-16 in the Shapiro-Wilk normality test. The large number of values around the mean becomes obvious by looking at the density distribution plot. By analysing the boxplot, one can also see that the whisker extends only until approximately 50 and all values above it are outliers.
+
+```{r}
+dscr_anls(pmt)
+
+
+histogram <- qplot(y$daily_average, geom='histogram', bins=20, main = 'Histogram', xlab='Air pollution (daily average)', ylab='Number of observations')
+density <- qplot(y$daily_average, geom='density', main = 'Density', xlab = 'Air pollution (daily average)', ylab = 'Density')
+boxplot <- qplot(y$daily_average, x= 1, geom = "boxplot", main = 'Boxplot', xlab = 'Created with daily averages', ylab = 'Air Pollution')
+shapiro.test(y$daily_average)
+
+histogram
+density
+boxplot
+
+```
+
+###Regression analysis
+
+The WHO created an index that measures the right levels for a set of gases to analyze pollution. Out of the extensive list of the pollutants, the five main concerns for the WHO are PM2.5, PM10, O3, NO2, SO2. 
+
+Given this importance, we chose to see how all of the pollutants behave by trying to explain them through two different perspectives. First of all, we are trying to explain the pollutants based on the weather conditions to see if atmospheric variables such as temperature, humidiy and precipitation have something to do with the pollution level. 
+
+```{r}
+pm2.5=subset(final_pollution, parameter_name=='PM2.5')
+View(pm2.5)
+summary(pm2.5.model)
+str(pm2.5)
+
+pm2.5.model=lm(daily_average ~ temp_avg + temp_max + temp_min + precipitation + humidity + wind_avg_speed, data = pm2.5)
+residpm2.5=resid(pm2.5.model)
+boxplot(residpm2.5)
+hist(residpm2.5)
+
+pm10=subset(final_pollution, parameter_name=='PM10')
+pm10.model=lm(daily_average ~ temp_avg + temp_max + temp_min + precipitation + humidity + wind_avg_speed, data = pm10)
+summary(pm10.model)
+residpm10=resid(pm10.model)
+boxplot(pm10.model$residuals)
+hist(pm10.model$residuals)
+
+
+o3=subset(final_pollution, parameter_name=='O3')
+o3.model=lm(daily_average ~ temp_avg + temp_max + temp_min + precipitation + humidity + wind_avg_speed, data = o3)
+resido3=resid(o3.model)
+boxplot(resido3)
+hist(resido3)
+
+
+no2=subset(final_pollution, parameter_name=='NO2')
+no2.model=lm(daily_average ~ temp_avg + temp_max + temp_min + precipitation + humidity + wind_avg_speed, data = no2)
+summary(no2.model)
+residno2=resid(no2.model)
+boxplot(residno2)
+hist(residno2)
+
+so2=subset(final_pollution, parameter_name=='SO2')
+so2.model=lm(daily_average ~ temp_avg + temp_max + temp_min + precipitation + humidity + wind_avg_speed, data = so2)
+summary(so2.model)
+residso2=resid(so2.model)
+boxplot(residso2)
+hist(residso2)
+
+par(mfrow=c(2,2))
+
+plot(pm2.5.model)
+plot(pm10.model)
+plot(o3.model)
+plot(no2.model)
+
+```
+
+The analysis shows that in spite of having a statistical significance, the variables dont explain on a high level the pollutants. The adjusted R-squared is extremely low and what we could infer out of these results is that the weather conditions alone are not enough to explain the pollutants. To test this idea we run an Anova command for each one of the models. The difference between the null deviance and the residual deviance shows how our model is doing against the null model (a model with only the intercept)
+
+```{r}
+
+testpm2.5.l=anova(pm2.5.model, test="Chisq")
+testpm10.l=anova(pm10.model, test="Chisq")
+testo3.l=anova(o3.model, test="Chisq")
+testno2.l=anova(no2.model, test="Chisq")
+testso2.l=anova(so2.model, test= "Chisq")
+
+testpm2.5.l
+testpm10.l
+testo3.l
+testno2.l
+testso2.l
+```
+
+The other orientation we have chosen is to try to explain the gases based on the other pollutants, this shows a high statistical level of significance for the variables shown on each model and also a higher Adjusted R Squared. So this is a better aproach for the understanding of what explains the levels of the main pollutants in the air. 
+To do this we created a new data frame that takes into account only the dail average for each one of the pollutants. In all the cases we ran a linear regression without taking into account the date of the variables as part of the model because dealing with a time series model would imply testing for other measures such as seasonability and checking if the observations are stationary or not. 
+
+We repeat the same econometric analysis for each one of the model as the one previously explained.
+
+```{r}
+str(pm2.5)
+dailyavpm2.5=pm2.5$daily_average
+dailyavpm2.5
+
+dailyavpm10=pm10$daily_average
+dailyavo3=o3$daily_average
+dailyavno2=no2$daily_average
+dailyavso2=so2$daily_average
+
+datpol=cbind(dailyavpm2.5,dailyavpm10,dailyavo3,dailyavno2,dailyavso2)
+datpol=data.frame(datpol)
+View(datpol)
+
+pol.mod.pm25=lm(dailyavpm2.5~dailyavpm10+dailyavo3+dailyavno2+dailyavso2, data=datpol)
+summary(pol.mod.pm25)
+residpm25.pol=resid(pol.mod.pm25)
+hist(residpm25.pol)
+boxplot(residpm25.pol)
+
+pol.mod.pm10=lm(dailyavpm10~dailyavpm2.5+dailyavo3+dailyavno2+dailyavso2, data=datpol)
+summary(pol.mod.pm10)
+residpm10.pol=resid(pol.mod.pm10)
+hist(residpm10.pol)
+boxplot(residpm10.pol)
+
+pol.mod.o3=lm(dailyavo3~dailyavpm10+dailyavpm2.5+dailyavno2+dailyavso2, data=datpol)
+summary(pol.mod.o3)
+resido3.pol=resid(pol.mod.o3)
+hist(resido3.pol)
+boxplot(resido3.pol)
+
+pol.mod.no2=lm(dailyavno2~dailyavo3+dailyavpm10+dailyavpm2.5+dailyavso2, data=datpol)
+summary(pol.mod.no2)
+residno2.pol=resid(pol.mod.no2)
+hist(residno2.pol)
+boxplot(residno2.pol)
+
+pol.mod.so2=lm(dailyavso2~dailyavo3+dailyavpm10+dailyavpm2.5+dailyavno2, data=datpol)
+summary(pol.mod.so2)
+residso2.pol=resid(pol.mod.so2)
+hist(residso2.pol)
+boxplot(residso2.pol)
+
+par(mfrow=c(2,3))
+
+plot(pol.mod.pm25)
+plot(pol.mod.pm10)
+plot(pol.mod.o3)
+plot(pol.mod.no2)
+plot(pol.mod.so2)
+
+polanova.pm25=anova(pol.mod.pm25, test="Chisq")
+polanova.pm10=anova(pol.mod.pm10, test="Chisq")
+polanova.o3=anova(pol.mod.o3, test="Chisq")
+polanova.no2=anova(pol.mod.no2, test="Chisq")
+polanova.so2=anova(pol.mod.so2, test="Chisq")
+
+polanova.pm25
+polanova.pm10
+polanova.o3
+polanova.no2
+polanova.so2
+
+
+```
+
+Besides checking the variables in a linear model, we decided to understand the odds for pollution given each one of the limits the WHO created: 
+
+PM2.5
+10 ??g/m3 annual median
+25 ??g/m3 daily median
+
+PM10
+20 ??g/m3 annual median
+50 ??g/m3 daily median
+ 
+O3
+100 ??g/m3 median in 8h
+
+NO2
+40 ??g/m3 de annual median
+200 ??g/m3 median in 1h
+
+SO2
+20 ??g/m3 media en 24h
+500 ??g/m3 de media en 10 min
+
+To do this, we created a binary variable that is 0 if the level is non harmful and 1 if it surpases the WHO limits. And then we applied the same analysis changing the models to logit regressions. The results we got are similar to the ones found in the linear regression models and can me seen in the code below. 
+
+For the only gas we couldn`t apply this model is for the SO2  because non of the observations in the data were high enough to create an alert.
+
+```{r}
+dummy=as.numeric(pm2.5$daily_average > 25)
+pm2.5.a=cbind(dummy,pm2.5)
+View(pm2.5.a)
+pm2.5.log=glm(dummy ~ temp_avg + temp_max + temp_min + precipitation + humidity + wind_avg_speed, family=binomial(link='logit'), data = pm2.5.a)
+summary(pm2.5.log)
+
+dummy2=as.numeric(pm10$daily_average > 50)
+pm10.a=cbind(dummy2,pm10)
+View(pm10.a)
+pm10.log=glm(dummy2 ~ temp_avg + temp_max + temp_min + precipitation + humidity + wind_avg_speed, family=binomial(link='logit'), data = pm10.a)
+summary(pm10.log)
+
+dummy3=as.numeric(o3$daily_average > 80)
+o3.a=cbind(dummy3,o3)
+View(o3.a)
+o3.log=glm(dummy3 ~ temp_avg + temp_max + temp_min + precipitation + humidity + wind_avg_speed, family=binomial(link='logit'), data = o3.a)
+summary(o3.log)
+
+dummy4=as.numeric(no2$daily_average > 40)
+no2.a=cbind(dummy4,no2)
+View(no2.a)
+no2.a.log=glm(dummy4 ~ temp_avg + temp_max + temp_min + precipitation + humidity + wind_avg_speed, family=binomial(link='logit'), data = no2.a)
+summary(no2.a.log)
+
+testpm2.5log=anova(pm2.5.log, test="Chisq")
+testpm2.5log
+
+testpm10log=anova(pm10.log, test="Chisq")
+testpm10log
+
+testo3=anova(o3.log,test="Chisq")
+testo3
+
+testno2=anova(no2.a.log, test="Chisq")
+testno2
+
+dummy.log=as.numeric(datpol$dailyavpm2.5 > 25)
+log.pol.pm2.5.a=cbind(dummy.log,datpol)
+pol.pm2.5.log=glm(dummy.log~dailyavpm10+dailyavo3+dailyavno2+dailyavso2, family=binomial(link='logit'), data=datpol)
+summary(pol.pm2.5.log)
+
+dummy2.log=as.numeric(datpol$dailyavpm10 > 50)
+log.pm10.a=cbind(dummy2.log,datpol)
+pol.pm10.log=glm(dummy2.log~dailyavpm2.5+dailyavo3+dailyavno2+dailyavso2, family=binomial(link='logit'), data=datpol)
+summary(pol.pm2.5.log)
+
+dummy3.log=as.numeric(datpol$dailyavo3 > 80)
+log.o3.a=cbind(dummy3.log,datpol)
+View(log.o3.a)
+pol.o3.log=glm(dummy3.log~dailyavpm2.5+dailyavpm10+dailyavno2+dailyavso2, family=binomial(link='logit'), data=datpol)
+summary(pol.o3.log)
+
+dummy4.log=as.numeric(datpol$dailyavno2 > 40)
+log.no2.a=cbind(dummy4.log,datpol)
+pol.no2.a.log=glm(dummy4.log~dailyavpm2.5+dailyavo3+dailyavpm10+dailyavso2, family=binomial(link='logit'), data=datpol)
+summary(pol.no2.a.log)
+
+par(mfrow=c(2,2))
+
+plot(pol.pm2.5.log)
+plot(pol.pm10.log)
+plot(pol.o3.log)
+plot(pol.no2.a.log)
+
+an.pm25=anova(pol.pm2.5.log, test="Chisq")
+an.pm10=anova(pol.pm10.log, test="Chisq")
+an.o3=anova(pol.o3.log, test="Chisq")
+an.no2=anova(pol.no2.a.log, test="Chisq")
+```
+
